@@ -2,3 +2,5 @@ streamlit
 streamlit-geolocation
 pandas
 requests
+gspread
+oauth2client
